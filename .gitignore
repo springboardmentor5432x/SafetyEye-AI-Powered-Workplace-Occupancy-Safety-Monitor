@@ -1,0 +1,23 @@
+# Datasets
+Data/
+css-data/
+construction-site-safety-image-dataset-roboflow.zip
+
+# Training outputs
+runs/
+results_yolov8n_100e/
+outputs/
+
+# Models
+*.pt
+Models/
+
+# Virtual environment
+venv/
+
+# Jupyter notebooks checkpoints
+.ipynb_checkpoints/
+
+# OS files
+.DS_Store
+Thumbs.db
