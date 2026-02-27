@@ -1,11 +1,8 @@
 import os , glob 
 import tqdm 
 import numpy as np 
-import pandas as pd
-from PIL import Image
-import cv2
-import matplotlib.pyplot as plt
 import warnings
+import pandas as pd
 warnings.filterwarnings('ignore')
 
 data_path  = '../Datasets/css-data'
@@ -35,17 +32,15 @@ test_label  = sorted(os.listdir(os.path.join(test_path , folder[1])))
 
 df = pd.DataFrame()
 df['filenames'] = train_filenames +valid_filenames+test_filenames
-df['label_names'] = train_label+test_label+valid_label
+df['label_names'] = train_label+valid_label+test_label
 
 df['train_id'] = [0]*len(train_filenames) + [1]*len(valid_filenames) +[2]*len(test_filenames)
 
 
 train_keys = list(train_dic.keys())
-print(df.label_names)
 annotation_files = (data_path + '/' + df.train_id.map(lambda x: train_keys[x]) + '/' + folder[1]
                     + '/' + df.label_names).tolist()
 
-print(annotation_files)
 t_id = df.train_id.tolist()
 counts = []
 invalid_idx = []
@@ -62,4 +57,13 @@ for idx, annotation_file in tqdm.tqdm(enumerate(annotation_files)):
     counts.append(annotation[:,0].astype(int))
     is_annotated.append(1)
 df['is_annotated'] = is_annotated
-print(df)
+
+print(type(counts))
+df['count'] = counts
+
+df_clean = df[df.is_annotated==1].copy() 
+
+
+
+
+df_clean.to_csv('../Output/intermediate_data/annotated.parquet',index=False)
