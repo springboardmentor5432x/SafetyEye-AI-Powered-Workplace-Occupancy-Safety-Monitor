@@ -1,3 +1,26 @@
+# Python cache
+__pycache__/
+*.pyc
+
+# Virtual environment
 venv/
-Datasets/
-Models/
+.env/
+
+# Dataset folders
+dataset/
+datasets/
+
+# YOLO runs
+runs/
+
+# Model weights
+*.pt
+*.pth
+
+# IDE files
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
