@@ -1,7 +1,8 @@
 ultralytics
+torch
 opencv-python
 numpy
 pandas
-streamlit
+scikit-learn
 python-dotenv
-loguru
+matplotlib
