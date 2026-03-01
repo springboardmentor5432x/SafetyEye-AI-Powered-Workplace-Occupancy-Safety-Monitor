@@ -1,201 +1,207 @@
-# SafetyEye – AI Powered Workplace Occupancy & Safety Monitor
+# SafetyEye  
+# AI-Powered Workplace Occupancy & Safety Monitoring System  
 
-## Overview
-SafetyEye is an AI-based system designed to monitor workplace occupancy and enforce safety compliance using computer vision techniques powered by YOLOv8.
+---
 
-The system focuses on:
-- Real-time people detection
-- Personal Protective Equipment (PPE) detection
-- Safety compliance monitoring (Hardhat, Mask, Safety Vest)
-- Construction site safety monitoring
-- Occupancy counting and alert generation
+## Project Overview
 
-## Dataset Information
+SafetyEye is an AI-powered computer vision system designed to monitor construction sites and workplaces for safety compliance and occupancy monitoring. The system detects Personal Protective Equipment (PPE) usage and identifies unsafe conditions in real time using object detection models.
 
-### Dataset Source
-This project uses the **Construction Site Safety** dataset from Roboflow Universe.
-- **License**: CC BY 4.0
-- **Classes**: 10 object classes
-  - Hardhat
-  - Mask
-  - NO-Hardhat
-  - NO-Mask
-  - NO-Safety Vest
-  - Person
-  - Safety Cone
-  - Safety Vest
-  - machinery
-  - vehicle
+The primary objective of this project is to:
 
-### Dataset Structure After Download
+- Detect PPE compliance (Hardhat, Mask, Safety Vest)
+- Identify safety violations (NO-Hardhat, NO-Mask, NO-Safety Vest)
+- Detect persons, machinery, vehicles, and safety cones
+- Build a structured and reproducible training pipeline using YOLOv8
+- Prepare the foundation for a real-time workplace safety monitoring system
 
-After downloading the dataset, organize it in the following structure:
+This project is being developed as part of the internship milestone tasks.
 
-```
-SafetyEye/
-├── Datasets/
-│   └── css-data/
-│       ├── train/
-│       │   ├── images/     (2605 training images)
-│       │   └── labels/     (2605 YOLO format .txt files)
-│       ├── valid/
-│       │   ├── images/     (validation images)
-│       │   └── labels/     (validation labels)
-│       └── test/
-│           ├── images/     (82 test images)
-│           └── labels/     (82 test labels)
-├── Models/
-│   └── yolov8n.pt          (YOLOv8 nano pretrained model)
-├── Scripts/
-│   ├── main.py             (Data exploration script)
-│   └── yolo.py             (Real-time detection script)
-├── Output/
-│   └── working/            (Output directory for results)
-├── noteBook/               (Jupyter notebooks for experiments)
-├── map.yaml                (Dataset configuration file)
-└── requriement.txt          (Python dependencies)
-```
+---
 
-**Important**: Place your downloaded `train`, `valid`, and `test` folders inside `Datasets/css-data/` directory.
+# Milestone 1: Data Preparation & Environment Setup
 
-## Current Work Done
+Milestone 1 focused on dataset preparation, validation, class identification, environment configuration, and pipeline verification.
 
-### 1. Data Exploration (`Scripts/main.py`)
-- Dataset loading and validation
-- Annotation file parsing (YOLO format)
-- Data statistics and distribution analysis
-- Class distribution counting
-- Invalid annotation detection
-- DataFrame creation for train/valid/test splits
+All Week 1 and Week 2 tasks under Milestone 1 have been successfully completed.
 
+---
 
+## Week 1 Tasks – Dataset Preparation & Understanding
 
-### 3. Project Structure
-- Organized folder structure for datasets, models, scripts, and outputs
-- YOLO format label files (class_id x_center y_center width height)
-- Pretrained YOLOv8 nano model ready for inference
+### 1. Dataset Source
 
-## Environment Setup
+The dataset used for this project is the "Construction Site Safety Image Dataset" obtained from Kaggle.
 
-### Prerequisites
-- Python 3.8 or higher
-- pip package manager
-- Webcam (for real-time detection)
+The dataset contains annotated construction site images for detecting Personal Protective Equipment (PPE) and other safety-related objects.
 
-### Installation Steps
+---
 
-1. **Clone or download this repository**
-   ```bash
-   cd SafetyEye
-   ```
+### 2. Dataset Structure
 
-2. **Create a virtual environment (recommended)**
-   ```bash
-   python -m venv venv
-   
-   # On Windows
-   venv\Scripts\activate
-   
-   # On Linux/Mac
-   source venv/bin/activate
-   ```
+The dataset follows the YOLO object detection format.
 
-3. **Install required packages**
-   ```bash
-   pip install -r requriment.txt
-   ```
+Directory structure:
 
-### Required Packages
-The `requriment.txt` includes:
-- `ultralytics` - YOLOv8 framework
-- `opencv-python` - Computer vision operations
-- `numpy` - Numerical computations
-- `pandas` - Data manipulation
-- `streamlit` - Web app framework (for future dashboard)
-- `python-dotenv` - Environment variable management
-- `loguru` - Advanced logging
+dataset/
+│
+├── train/
+│   ├── images/
+│   └── labels/
+│
+├── valid/
+│   ├── images/
+│   └── labels/
+│
+├── test/
+│   ├── images/
+│   └── labels/
+│
+└── data.yaml
 
-4. **Download the YOLOv8 model**
-   The YOLOv8 nano model (`yolov8n.pt`) should be placed in the `Models/` directory.
-   It will be automatically downloaded on first run if not present.
+Each image has a corresponding label file in YOLO format:
 
-5. **Download and organize the dataset**
-   - Download the Construction Site Safety dataset from Roboflow
-   - Extract and place `train`, `valid`, and `test` folders in `Datasets/css-data/`
-   - Ensure each folder contains `images` and `labels` subdirectories
+<class_id> <x_center> <y_center> <width> <height>
 
-## Things to Change/Improve
+- class_id represents the object class index.
+- Bounding box coordinates are normalized between 0 and 1.
 
-### High Priority
-1. **Complete `map.yaml` configuration**
-   - Currently empty - needs dataset paths and class names
-   - Required format:
-     ```yaml
-     train: ../Datasets/css-data/train/images
-     val: ../Datasets/css-data/valid/images
-     test: ../Datasets/css-data/test/images
-     
-     nc: 10  # number of classes
-     names: ['Hardhat', 'Mask', 'NO-Hardhat', 'NO-Mask', 'NO-Safety Vest', 
-             'Person', 'Safety Cone', 'Safety Vest', 'machinery', 'vehicle']
-     ```
+---
 
-2. **Model Training Script**
-   - Create training script to fine-tune YOLOv8 on construction safety dataset
-   - Add hyperparameter configuration
-   - Implement training callbacks and logging
+### 3. Class Identification
 
-### Medium Priority
-4. **Validation Script**
-   - Create validation/evaluation script for model performance
-   - Add metrics: mAP, precision, recall, F1-score
-   - Generate confusion matrix
+Label files were inspected to determine the number of object classes.
 
-5. **Inference Pipeline**
-   - Enhance `yolo.py` for video file processing
-   - Add batch image processing
-   - Implement result saving functionality
+- Class IDs range from 0 to 9
+- Total number of classes = 10
 
-6. **Safety Alert System**
-   - Detect PPE violations (NO-Hardhat, NO-Mask, NO-Safety Vest)
-   - Implement alert triggers
-   - Add logging for safety violations
+The dataset contains the following 10 safety-related classes:
 
-### Low Priority
-7. **Streamlit Dashboard**
-   - Create web interface for monitoring
-   - Real-time statistics display
-   - Historical data visualization
+0: Hardhat  
+1: Mask  
+2: NO-Hardhat  
+3: NO-Mask  
+4: NO-Safety Vest  
+5: Person  
+6: Safety Cone  
+7: Safety Vest  
+8: Machinery  
+9: Vehicle  
 
+These class definitions were obtained from the official dataset source and confirmed inside `data.yaml`.
 
+---
 
-## Usage
+### 4. Dataset Split Verification
 
-### Run Data Exploration
-```bash
-cd Scripts
-python main.py
-```
+The dataset was programmatically verified and reorganized into the required academic split ratio.
 
+Total images: 2801  
 
+Final split:
 
-### Train Custom Model (TODO)
-```bash
-# After creating training script
-python Scripts/train.py --data map.yaml --epochs 100 --batch 16
-```
+- Train: 1960 images (70%)
+- Validation: 560 images (20%)
+- Test: 281 images (10%)
 
-## Project Status
-- ✅ Dataset downloaded and organized
-- ✅ Basic data exploration implemented
-- ⏳ Model training pipeline (pending)
-- ⏳ Validation and metrics (pending)
-- ⏳ Safety alert system (pending)
-- ⏳ Web dashboard (pending)
+The dataset is now cleanly structured and aligned with the required 70-20-10 split.
 
-## License
-Dataset: CC BY 4.0
+---
 
-## Acknowledgments
-- Dataset from Roboflow Universe - Construction Site Safety
-- YOLOv8 by Ultralytics
+## Week 2 Tasks – Verification, Testing & Environment Setup
+
+### 5. Data Verification
+
+The following verification steps were performed:
+
+- Verified YOLO label format consistency
+- Confirmed class IDs range from 0 to 9
+- Confirmed each image has a corresponding .txt label file
+- Opened and displayed sample images using OpenCV
+- Validated bounding box alignment visually
+- Successfully ran a YOLOv8 training pipeline test
+
+---
+
+### 6. Training Pipeline Validation
+
+A 1-epoch training test was executed using YOLOv8 to verify:
+
+- Dataset configuration
+- data.yaml correctness
+- Model compatibility
+- Training pipeline functionality
+
+Training was successfully completed for 1 epoch and model weights were generated inside:
+
+runs/detect/train/
+
+Validation metrics were successfully computed, confirming that the dataset and configuration are correct.
+
+Inference was also performed successfully on test images.
+
+This confirms that the full training and inference pipeline is functioning properly.
+
+---
+
+### 7. Data Cleaning & Organization
+
+- Removed unnecessary extracted folders (results_yolo_v8, source_files)
+- Ensured only required dataset folders remain
+- Maintained structured project organization
+
+Current project structure:
+
+- dataset/
+- scripts/
+- models/
+- notebooks/
+- runs/
+- venv/
+
+The project architecture is clean and reproducible.
+
+---
+
+### 8. Environment Setup
+
+Development Environment:
+
+- Python 3.10.11
+- Virtual environment created using venv
+- Visual Studio Code
+
+Installed Libraries:
+
+- ultralytics (YOLOv8)
+- torch (PyTorch)
+- opencv-python
+- numpy
+- pandas
+- scikit-learn
+- matplotlib
+
+Verification:
+
+- YOLOv8 installed successfully
+- `yolo` command runs correctly
+- Training pipeline executes without errors
+- Model weights generated successfully
+- 1 epoch training test completed successfully
+
+---
+
+# Milestone 1 Completion Status
+
+All Week 1 and Week 2 tasks have been completed:
+
+- Dataset downloaded and organized
+- 70-20-10 split implemented
+- YOLO format verified
+- Classes identified and confirmed
+- Environment configured
+- Training pipeline validated
+- 1 epoch training test executed successfully
+- Inference verified
+
+Milestone 1 is successfully completed.
