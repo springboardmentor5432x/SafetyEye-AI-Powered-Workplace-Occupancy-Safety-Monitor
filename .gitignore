@@ -1,21 +1,64 @@
+# =========================
 # Virtual Environment
+# =========================
 venv/
 env/
 
+# =========================
 # Python Cache
+# =========================
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
 
+# =========================
 # Model Files
+# =========================
 *.pt
 *.pth
+*.onnx
+*.engine
 
+# =========================
+# YOLO / Training Outputs
+# =========================
+runs/
+*.cache
+
+# =========================
 # Logs
+# =========================
 *.log
+wandb/
+tensorboard/
 
+# =========================
+# Dataset (Optional - If large)
+# =========================
+# Uncomment if dataset is large and not required on GitHub
+# dataset/images/
+# dataset/labels/
+
+# =========================
 # OS Files
+# =========================
 .DS_Store
 Thumbs.db
 
-# Jupyter Notebook Checkpoints
+# =========================
+# Jupyter Notebook
+# =========================
 .ipynb_checkpoints/
+
+# =========================
+# VS Code
+# =========================
+.vscode/
+
+# =========================
+# Misc
+# =========================
+*.zip
+*.tar
+*.gz
