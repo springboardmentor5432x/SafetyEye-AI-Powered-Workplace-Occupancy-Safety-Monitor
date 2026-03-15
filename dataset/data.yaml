@@ -1,0 +1,16 @@
+path: dataset
+train: images/train
+val: images/val
+
+nc: 10
+names:
+  - Hardhat
+  - Mask
+  - NO-Hardhat
+  - NO-Mask
+  - Safety Vest
+  - NO-Safety Vest
+  - Person
+  - Machinery
+  - Vehicle
+  - Cone
