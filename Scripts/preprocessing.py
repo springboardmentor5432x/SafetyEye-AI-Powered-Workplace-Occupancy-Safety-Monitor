@@ -57,13 +57,10 @@ for idx, annotation_file in tqdm.tqdm(enumerate(annotation_files)):
     counts.append(annotation[:,0].astype(int))
     is_annotated.append(1)
 df['is_annotated'] = is_annotated
-
-print(type(counts))
 df['count'] = counts
-
 df_clean = df[df.is_annotated==1].copy() 
 
 
 
 
-df_clean.to_csv('../Output/intermediate_data/annotated.parquet',index=False)
+df_clean.to_parquet('../Output/intermediate_data/annotated_1.parquet',index=False,engine="pyarrow")

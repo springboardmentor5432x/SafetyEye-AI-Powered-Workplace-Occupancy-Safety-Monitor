@@ -2,7 +2,7 @@
 # Construction Site Safety Dataset
 
 # Dataset paths (relative to this file)
-train: Datasets/css-data/train/images
+train: Datasets/css-data/cleaned_train/train/images
 val: Datasets/css-data/valid/images
 test: Datasets/css-data/test/images
 
