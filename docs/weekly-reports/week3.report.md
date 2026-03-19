@@ -87,15 +87,6 @@ Validation results confirmed **stable model performance across multiple object c
 
 The model was tested on **unseen test images** to evaluate generalization.
 
-Results showed accurate detection of:
-
-- Persons
-- Helmets
-- Safety Vests
-- Machinery
-- Safety Cones
-
----
 
 ## Conclusion
 

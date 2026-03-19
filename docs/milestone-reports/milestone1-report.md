@@ -84,16 +84,16 @@ The dataset used in the project is the **Construction Site Safety Dataset** obta
 
 ### Classes in the Dataset
 
-- Person
-- Helmet
-- Safety Vest
-- Head
+- Hardhat 
+- Mask  
+- NO-Hardhat 
+- NO-Mask 
+- Safety Vest  
+- NO-Safety Vest
+- Safety Cone  
+- Person 
 - Machinery
-- Safety Cone
-- Gloves
-- Boots
-- Face Mask
-- Tools
+- Vehicle
 
 ---
 
@@ -178,16 +178,16 @@ val: images/val
 test: images/test
 
 names:
-- person
-- helmet
-- safety_vest
-- head
-- machinery
-- safety_cone
-- gloves
-- boots
-- face_mask
-- tools
+- Hardhat 
+- Mask  
+- NO-Hardhat 
+- NO-Mask 
+- Safety Vest  
+- NO-Safety Vest
+- Safety Cone  
+- Person 
+- Machinery
+- Vehicle
 
 
 ## Initial Model Training

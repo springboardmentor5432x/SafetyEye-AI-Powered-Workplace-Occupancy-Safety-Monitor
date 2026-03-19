@@ -59,16 +59,16 @@ The dataset used for the project is the *Construction Site Safety Dataset* obtai
 
 ### Classes in the Dataset
 
-- Person  
-- Helmet  
+- Hardhat 
+- Mask  
+- NO-Hardhat 
+- NO-Mask 
 - Safety Vest  
-- Head  
-- Machinery  
+- NO-Safety Vest
 - Safety Cone  
-- Gloves  
-- Boots  
-- Face Mask  
-- Tools  
+- Person 
+- Machinery
+- Vehicle
 
 ## Dataset Verification
 

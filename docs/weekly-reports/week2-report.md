@@ -30,11 +30,10 @@ The dataset was split into three parts:
 
 ### Final Dataset Distribution
 
-| Split | Images |
-|------|-------|
-| Training | 1960 |
-| Validation | 560 |
-| Testing | 281 |
+| Split      | Images |
+| Training   | 1960   |
+| Validation | 560    |
+| Testing    | 281    |
 
 ---
 
@@ -62,16 +61,16 @@ val: images/val
 test: images/test
 
 names:
-- person
-- helmet
-- safety_vest
-- head
-- machinery
-- safety_cone
-- gloves
-- boots
-- face_mask
-- tools
+- Hardhat 
+- Mask  
+- NO-Hardhat 
+- NO-Mask 
+- Safety Vest  
+- NO-Safety Vest
+- Safety Cone  
+- Person 
+- Machinery
+- Vehicle
 
 --
 
