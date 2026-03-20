@@ -63,10 +63,10 @@ The dataset used for the project is the *Construction Site Safety Dataset* obtai
 - Mask  
 - NO-Hardhat 
 - NO-Mask 
-- Safety Vest  
-- NO-Safety Vest
+- No-Safety Vest  
+- Person
 - Safety Cone  
-- Person 
+- Safety Vest
 - Machinery
 - Vehicle
 

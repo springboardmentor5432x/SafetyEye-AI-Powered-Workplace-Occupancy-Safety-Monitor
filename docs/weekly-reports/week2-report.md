@@ -65,13 +65,12 @@ names:
 - Mask  
 - NO-Hardhat 
 - NO-Mask 
-- Safety Vest  
-- NO-Safety Vest
+- No-Safety Vest  
+- Person
 - Safety Cone  
-- Person 
+- Safety Vest
 - Machinery
 - Vehicle
-
 --
 
 Initial Training
