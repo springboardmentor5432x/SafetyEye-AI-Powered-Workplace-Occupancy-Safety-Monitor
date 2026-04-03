@@ -18,7 +18,7 @@ Training_200/
 Output/
 *.pt
 *.zip
-
+.kiro/
 # Logs & runtime output
 logs/
 Scripts/logs/
@@ -28,7 +28,7 @@ events.json
 
 # Video files
 video/
-
+.vscode/
 # Env
 .env
 
