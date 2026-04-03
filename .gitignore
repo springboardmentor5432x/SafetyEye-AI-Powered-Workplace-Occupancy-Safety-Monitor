@@ -1,5 +1,37 @@
+# Python
 venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.eggs/
+dist/
+build/
+node_modules/
+Frontend/node_modules
+# ML / Training artefacts
 Datasets/
 Models/
 Training_100/
 Training_200/
+Output/
+*.pt
+*.zip
+
+# Logs & runtime output
+logs/
+Scripts/logs/
+*.log
+event.json
+events.json
+
+# Video files
+video/
+
+# Env
+.env
+
+# IDE
+.vscode/
+.idea/

@@ -1,0 +1,36 @@
+.bar {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.stat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 14px;
+}
+
+.label {
+  font-size: 0.78rem;
+  color: var(--muted);
+  letter-spacing: 0.05em;
+}
+
+.value {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--accent2);
+}
+
+.clear {
+  font-size: 0.8rem;
+  letter-spacing: 0.15em;
+  color: var(--ok);
+  font-weight: 600;
+}

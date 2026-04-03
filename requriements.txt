@@ -1,9 +1,0 @@
-ultralytics
-opencv-python
-numpy
-pandas
-matplotlib
-tqdm
-streamlit
-python-dotenv
-loguru

@@ -1,0 +1,32 @@
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: 4px;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.75rem;
+  letter-spacing: 0.1em;
+  font-weight: 700;
+  border: 1px solid currentColor;
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.ok     { color: var(--ok);      background: rgba(0,255,136,0.08); }
+.warn   { color: var(--warn);    background: rgba(255,107,0,0.08); }
+.muted  { color: var(--muted);   background: rgba(90,90,138,0.08); }
+.danger { color: var(--accent2); background: rgba(255,45,120,0.08); }
+
+.ok .dot   { box-shadow: 0 0 6px var(--ok);   animation: pulse 1.2s infinite; }
+.warn .dot { box-shadow: 0 0 6px var(--warn); animation: pulse 0.8s infinite; }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.3; }
+}
