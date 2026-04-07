@@ -1,32 +1,33 @@
 from ultralytics import YOLO
 import cv2
 
-# Load trained YOLO model
+# Load model
 model = YOLO("models/bestmodel.pt")
 
-# Open webcam
-cap = cv2.VideoCapture(1)
+# Load video
+cap = cv2.VideoCapture("dataset/videos/fullsaftey.mp4")
 
 if not cap.isOpened():
-    print("Error: Could not open camera")
+    print("Error: Cannot open video")
     exit()
 
-print("SafetyEye Real-Time Monitoring Started...")
-print("Press Q to quit\n")
+print("Video Detection Started... Press Q to exit")
 
 while True:
-
     ret, frame = cap.read()
     if not ret:
         break
 
-    # Run YOLO detection
+    # Resize (optional for smooth performance)
+    frame = cv2.resize(frame, (640, 480))
+
+    # YOLO detection
     results = model(frame, conf=0.5)
 
-    alerts = []
-
-    # Draw YOLO bounding boxes FIRST
+    # Draw YOLO boxes
     annotated_frame = results[0].plot()
+
+    alerts = []
 
     for r in results:
         boxes = r.boxes
@@ -44,7 +45,7 @@ while True:
             else:
                 others.append((label, xyxy))
 
-        # Check each person separately
+        # Check each person
         for px1, py1, px2, py2 in persons:
 
             has_helmet = False
@@ -53,6 +54,7 @@ while True:
 
             for label, (ox1, oy1, ox2, oy2) in others:
 
+                # Check if object inside person box
                 if ox1 > px1 and oy1 > py1 and ox2 < px2 and oy2 < py2:
 
                     if label == "Hardhat":
@@ -64,7 +66,6 @@ while True:
 
             unsafe = False
 
-            # Add alerts + mark unsafe
             if not has_helmet:
                 alerts.append("Helmet Missing")
                 unsafe = True
@@ -87,13 +88,10 @@ while True:
                     3
                 )
 
-    # Remove duplicate alerts
+    # Remove duplicates
     alerts = list(set(alerts))
 
-    # =================
-    # Display Alerts
-    # =================
-
+    # Display alerts
     y = 40
     for alert in alerts:
         cv2.putText(
@@ -108,13 +106,10 @@ while True:
         )
         y += 30
 
-    if alerts:
-        print("WARNING:", ", ".join(alerts))
+    # Show video
+    cv2.imshow("SafetyEye - Video Detection", annotated_frame)
 
-    # Show frame
-    cv2.imshow("SafetyEye - Real Time Monitoring", annotated_frame)
-
-    if cv2.waitKey(1) & 0xFF == ord("q"):
+    if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
 cap.release()
