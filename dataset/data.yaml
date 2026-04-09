@@ -1,0 +1,24 @@
+# Set to the absolute path of our dataset folder
+path: /Users/utkarstdawar/Desktop/SafetyEye/dataset
+
+# Paths to the image folders (YOLO will add these to the 'path' above)
+train: images/train
+val: images/val
+test: images/test
+
+# Number of classes
+nc: 10
+
+# Class names
+names: [
+  'Hardhat', 
+  'Mask', 
+  'NO-Hardhat', 
+  'NO-Mask', 
+  'NO-Safety Vest', 
+  'Person', 
+  'Safety Cone', 
+  'Safety Vest', 
+  'machinery', 
+  'vehicle'
+]

@@ -1,0 +1,60 @@
+# macOS
+.DS_Store
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.so
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Editors
+.vscode/
+.idea/
+
+# Local databases and logs
+*.db
+*.sqlite
+*.sqlite3
+*.log
+*.csv
+*.jsonl
+
+# Test and runtime artifacts
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Streamlit / temporary files
+.streamlit/secrets.toml
+tmp/
+temp/
+*.tmp
+temp_streams/
+
+# Generated monitoring outputs
+violations/
+violation_screenshots/
+safety_logs.csv
+violation_logs.json
+violations.log
+demo/output_result.jpg
+
+# Training / experiment outputs
+runs/
+
+# Large local assets that should not be pushed by default
+dataset/images/
+dataset/labels/
+datasets/
+*.pt
+*.pth
+*.onnx
+
+# Optional notebook checkpoints
+.ipynb_checkpoints/

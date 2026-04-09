@@ -1,0 +1,16 @@
+# SafetyEye runtime requirements
+
+# Core detection / vision
+ultralytics
+torch
+opencv-python
+av
+
+# Data handling
+numpy
+pandas
+
+# Dashboard and analytics
+streamlit
+streamlit-webrtc
+plotly
