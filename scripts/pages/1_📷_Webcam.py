@@ -2,6 +2,12 @@ import streamlit as st
 import cv2
 from ultralytics import YOLO
 import time
+import sys
+import os
+
+# Ensure we can import from scripts/
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from audio_utils import play_alarm
 
 st.set_page_config(page_title="Webcam Monitoring – SafetyEye", page_icon="🎥", layout="wide")
 
@@ -38,6 +44,14 @@ col_ctrl, _ = st.columns([1, 3])
 with col_ctrl:
     camera_index = st.selectbox("Camera Index", [0, 1, 2])
     run = st.toggle("▶  Start Webcam", key="webcam_run")
+    
+    # Alarm state initialization and toggle
+    if 'alarm_enabled' not in st.session_state:
+        st.session_state.alarm_enabled = True
+    if 'last_alarm_time' not in st.session_state:
+        st.session_state.last_alarm_time = 0.0
+        
+    st.session_state.alarm_enabled = st.toggle("🔔 Enable Alarm", value=st.session_state.alarm_enabled, key="webcam_alarm_toggle")
 
 col1, col2 = st.columns([2, 1], gap="medium")
 
@@ -84,6 +98,13 @@ if run:
             alert_box.markdown(f'<div class="alert-panel">{cards}</div>', unsafe_allow_html=True)
         else:
             alert_box.markdown(f'<div class="alert-panel"><div class="alert-card-safe"><span>✅</span><div><div class="alert-title">All Safe</div><div class="alert-meta">{ts}</div></div></div></div>', unsafe_allow_html=True)
+
+        # ── Alarm Logic ──────────────────────────────────
+        if alerts and st.session_state.alarm_enabled:
+            current_time = time.time()
+            if current_time - st.session_state.last_alarm_time > 4.0:
+                play_alarm()
+                st.session_state.last_alarm_time = current_time
 
         time.sleep(0.03)
 

@@ -7,6 +7,7 @@ import time
 import datetime
 from pages.analytics import render_analytics
 from pages.logs import render_logs
+from audio_utils import play_alarm
 
 # ==========================================
 # PAGE CONFIG & STYLING
@@ -405,6 +406,12 @@ if 'logs' not in st.session_state:
 if '_last_log_ts' not in st.session_state:
     st.session_state['_last_log_ts'] = 0.0
 
+# Initialize Alarm System
+if 'alarm_enabled' not in st.session_state:
+    st.session_state.alarm_enabled = True
+if 'last_alarm_time' not in st.session_state:
+    st.session_state.last_alarm_time = 0.0
+
 # Initialize dashboard stats
 if 'total_persons' not in st.session_state:
     st.session_state['total_persons'] = 0
@@ -469,6 +476,9 @@ with st.sidebar:
 
     start_val = st.toggle("▶  Start Monitoring", value=st.session_state.monitoring, key="monitoring_toggle")
     
+    # Alarm System Toggle
+    st.session_state.alarm_enabled = st.toggle("🔔 Enable Alarm", value=st.session_state.alarm_enabled, key="alarm_toggle")
+
     # If starting monitoring from Dashboard, navigate to Webcam Monitoring page
     if start_val and not st.session_state.monitoring and st.session_state.active_page == "Dashboard":
         st.session_state.active_page = "Webcam Monitoring"
@@ -930,6 +940,13 @@ def main():
                             })
                         if len(st.session_state['logs']) > 500:
                             st.session_state['logs'] = st.session_state['logs'][-500:]
+
+                    # ── Alarm Logic ──────────────────────────────────
+                    if alerts and st.session_state.alarm_enabled:
+                        current_time = time.time()
+                        if current_time - st.session_state.last_alarm_time > 4.0:
+                            play_alarm()
+                            st.session_state.last_alarm_time = current_time
 
                     time.sleep(0.01)
 
