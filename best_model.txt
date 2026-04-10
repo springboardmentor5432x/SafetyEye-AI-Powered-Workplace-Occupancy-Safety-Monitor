@@ -1,0 +1,9 @@
+Analyzing all training results...
+runs/detect\100epoch: Max mAP50 = 0.7841 (Found best.pt)
+runs/detect\1epoch: Max mAP50 = 0.2770 (Found best.pt)
+runs/detect\50epoch: Max mAP50 = 0.7570 (Found best.pt)
+runs/detect\800imgsz: Max mAP50 = 0.7879 (Found best.pt)
+runs/detect\augmentation_exp: Max mAP50 = 0.7515 (Found best.pt)
+runs/detect\yolov8s_model: Max mAP50 = 0.8291 (Found best.pt)
+
+WINNER|runs/detect/yolov8s_model/weights/best.pt|0.8291
