@@ -25,6 +25,7 @@ import os
 import math
 import uuid
 import base64
+import subprocess
 from datetime import datetime
 from flask import Flask, Response, request, jsonify, send_from_directory
 from flask_socketio import SocketIO
@@ -271,6 +272,17 @@ def fire_alert(cid, conf, frame):
     print(f"[ALERT] {ts}  {msg}  ({conf*100:.1f}%)  → {fname}")
 
 # ─────────────────────────────────────────────────────────────
+# STREAM HELPER: Improved HTTP/RTSP stream opening
+# ─────────────────────────────────────────────────────────────
+
+def open_stream(source):
+    """Try to open stream with proper buffer configuration."""
+    cap = cv2.VideoCapture(source)
+    if isinstance(source, str) and (source.startswith("http") or source.startswith("rtsp")):
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    return cap
+
+# ─────────────────────────────────────────────────────────────
 # PIPELINE THREAD
 # FIX: cap is stored in a mutable list so bg_reader can rebind it
 # ─────────────────────────────────────────────────────────────
@@ -287,15 +299,20 @@ def pipeline_thread(source, stop_event, model):
                 if not cap.isOpened():
                     cap = cv2.VideoCapture(source)
             else:
-                cap = cv2.VideoCapture(source)
-                if isinstance(source, str) and (source.startswith("http") or source.startswith("rtsp")):
-                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-                    cap.set(cv2.CAP_PROP_FPS, 30)
+                cap = open_stream(source)
 
             if cap and cap.isOpened():
                 cap_holder[0] = cap
+                print(f"[SUCCESS] Stream opened: {source}")
                 break
             retry_count += 1
+            if retry_count < max_retries:
+                print(f"[WARN] Failed to open {source}, retry {retry_count}/{max_retries}")
+                time.sleep(1)
+        except Exception as e:
+            print(f"[ERROR] Exception opening stream: {e}")
+            retry_count += 1
+            time.sleep(1)
             if retry_count < max_retries:
                 print(f"[WARN] Failed to open {source}, retry {retry_count}/{max_retries}")
                 time.sleep(1)
@@ -484,21 +501,61 @@ def serve_alert(filename):
 
 @app.route("/test_stream", methods=["POST"])
 def test_stream():
+    """Enhanced stream testing with detailed diagnostics."""
     url = (request.json or {}).get("url", "").strip()
     if not url:
         return jsonify({"ok": False, "error": "No URL provided"})
-    print(f"[TEST] Probing stream: {url}")
+    
+    print(f"\n[TEST] ════════════════════════════════════════")
+    print(f"[TEST] Testing stream: {url}")
+    print(f"[TEST] ════════════════════════════════════════")
+    
     try:
-        cap = cv2.VideoCapture(url)
-        if not cap.isOpened():
-            return jsonify({"ok": False, "error": f"Cannot open: {url}"})
-        ret, frame = cap.read()
+        # Use improved stream opener
+        cap = open_stream(url)
+        
+        if not cap or not cap.isOpened():
+            print(f"[TEST] ✗ Cannot open stream")
+            return jsonify({
+                "ok": False, 
+                "error": f"Cannot open stream. URL valid? Firewall allows access?"
+            })
+        
+        print(f"[TEST] ✓ Stream opened")
+        
+        # Try to read first frame with retry
+        ret = False
+        frame = None
+        attempts = 0
+        while attempts < 5 and not ret:
+            ret, frame = cap.read()
+            attempts += 1
+            if not ret:
+                time.sleep(0.2)
+        
+        if not ret or frame is None:
+            cap.release()
+            print(f"[TEST] ✗ Cannot read frames from stream")
+            return jsonify({
+                "ok": False, 
+                "error": "Stream opened but cannot read frames. Check stream format and permissions."
+            })
+        
+        h, w = frame.shape[:2]
         cap.release()
-        if not ret:
-            return jsonify({"ok": False, "error": "Stream opened but no frames received"})
-        return jsonify({"ok": True, "message": f"Stream OK — received frame {frame.shape}"})
+        
+        print(f"[TEST] ✓ Received frame: {w}x{h}")
+        print(f"[TEST] ════════════════════════════════════════\n")
+        
+        return jsonify({
+            "ok": True, 
+            "message": f"Stream OK - {w}x{h} MJPEG @ ~30fps"
+        })
+    
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)})
+        print(f"[TEST] ✗ Exception: {e}")
+        print(f"[TEST] ════════════════════════════════════════\n")
+        return jsonify({"ok": False, "error": f"Error: {str(e)}"})
 
 @app.route("/start_cctv", methods=["POST"])
 def start_cctv():
