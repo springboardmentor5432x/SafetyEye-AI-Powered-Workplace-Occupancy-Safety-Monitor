@@ -1,17 +1,20 @@
 """
-SafetyEye AI -- Fixed Version
-Fixes:
-  - Webcam video now displays correctly on screen
-  - Uploaded video loops continuously and streams frames
-  - CCTV / RTSP streams work reliably
-  - Alert frames saved and served from /alerts/<filename>
-  - Alert log shows saved frame thumbnails in browser
+SafetyEye AI -- Fixed Version v2
+Fixes applied:
+  1. bg_reader cap-rebind bug: used nonlocal cap properly via a mutable container
+  2. Pipeline stop/reset now clears last_alert_time to avoid stale cooldown state
+  3. Model loading errors are caught and emitted to UI
+  4. pipeline_stopped socket event resets UI mode
+  5. CCTV/RTSP reconnect logic actually works now (cap container pattern)
+  6. process_frame route guards against unloaded model
+  7. Stream-img src reset on stop prevents browser caching stale frame
+  8. on_connect replays stats AND alerts to newly connected clients
 
 Install:
     pip install flask flask-socketio ultralytics opencv-python
 
 Run:
-    python realtime_pipeline.py
+    python realtime_pipeline_fixed.py
     Open http://localhost:5000
 """
 
@@ -85,6 +88,7 @@ pipeline = {
     "webcam_active_violations": set(),
     "stats": {"fps":0.0,"frame":0,"violations":0,"violation_list":[],"total_alerts":0},
     "alert_log": [],
+    # FIX: last_alert_time is now reset on each pipeline start to avoid stale cooldowns
     "last_alert_time": {},
 }
 _model = None
@@ -184,7 +188,6 @@ def rule_engine(detections,frame):
     fh, fw = frame.shape[:2]
     frame_area = max(1, fh * fw)
 
-    # Keep only likely real people; suppress common object false positives.
     persons = []
     for (cid, conf, box) in detections:
         if cid != 5:
@@ -198,12 +201,10 @@ def rule_engine(detections,frame):
             continue
         if area_ratio < PERSON_MIN_AREA_RATIO or area_ratio > PERSON_MAX_AREA_RATIO:
             continue
-        # Person boxes are usually not extremely flat.
         if aspect < 0.55:
             continue
         persons.append((conf, box))
 
-    # Ignore unrelated objects; only use PPE classes tied to person compliance.
     required_ppe_ids = set(REQUIRED_PPE.values())
     ppe_items = [(cid,c,b) for (cid,c,b) in detections if cid in required_ppe_ids]
     vmap      = {}
@@ -238,7 +239,7 @@ def infer(model,frame):
     return dets
 
 # ─────────────────────────────────────────────────────────────
-# ALERT HELPER — saves frame + emits with image URL
+# ALERT HELPER
 # ─────────────────────────────────────────────────────────────
 
 def fire_alert(cid, conf, frame):
@@ -247,10 +248,8 @@ def fire_alert(cid, conf, frame):
     fname = f"alert_{msg.replace(' ','_')}_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.jpg"
     fpath = os.path.join(ALERT_SAVE_DIR, fname)
 
-    # Save the annotated frame to disk
     cv2.imwrite(fpath, frame)
 
-    # Also encode as base64 for instant display in browser (no reload needed)
     ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
     img_b64 = ""
     if ok:
@@ -262,8 +261,8 @@ def fire_alert(cid, conf, frame):
         "msg":      msg,
         "conf":     round(conf * 100, 1),
         "type":     "violation",
-        "img_url":  f"/alerts/{fname}",   # served by Flask
-        "img_b64":  img_b64,              # instant inline display
+        "img_url":  f"/alerts/{fname}",
+        "img_b64":  img_b64,
     }
     pipeline["alert_log"].append(entry)
     pipeline["stats"]["total_alerts"] = len(pipeline["alert_log"])
@@ -272,46 +271,109 @@ def fire_alert(cid, conf, frame):
     print(f"[ALERT] {ts}  {msg}  ({conf*100:.1f}%)  → {fname}")
 
 # ─────────────────────────────────────────────────────────────
-# PIPELINE THREAD — upload video + CCTV + server webcam
+# PIPELINE THREAD
+# FIX: cap is stored in a mutable list so bg_reader can rebind it
 # ─────────────────────────────────────────────────────────────
 
 def pipeline_thread(source, stop_event, model):
-    # Open capture
-    if isinstance(source, int):
-        cap = cv2.VideoCapture(source, cv2.CAP_DSHOW)
-        if not cap.isOpened():
-            cap = cv2.VideoCapture(source)
-    else:
-        cap = cv2.VideoCapture(source)
+    max_retries = 3
+    retry_count = 0
+    cap_holder = [None]  # FIX: mutable container so bg_reader can reassign cap
 
-    if not cap.isOpened():
-        sio.emit("pipeline_error", {"msg": f"Cannot open: {source}"}); return
+    while retry_count < max_retries and not stop_event.is_set():
+        try:
+            if isinstance(source, int):
+                cap = cv2.VideoCapture(source, cv2.CAP_DSHOW)
+                if not cap.isOpened():
+                    cap = cv2.VideoCapture(source)
+            else:
+                cap = cv2.VideoCapture(source)
+                if isinstance(source, str) and (source.startswith("http") or source.startswith("rtsp")):
+                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                    cap.set(cv2.CAP_PROP_FPS, 30)
+
+            if cap and cap.isOpened():
+                cap_holder[0] = cap
+                break
+            retry_count += 1
+            if retry_count < max_retries:
+                print(f"[WARN] Failed to open {source}, retry {retry_count}/{max_retries}")
+                time.sleep(1)
+        except Exception as e:
+            print(f"[ERROR] Exception opening stream: {e}")
+            retry_count += 1
+            time.sleep(1)
+
+    if not cap_holder[0] or not cap_holder[0].isOpened():
+        sio.emit("pipeline_error", {"msg": f"Cannot open source after {max_retries} retries: {source}"})
+        pipeline["running"] = False
+        return
 
     is_live = isinstance(source, int) or (
         isinstance(source, str) and (source.startswith("http") or source.startswith("rtsp")))
 
-    # Background reader for live sources keeps buffer fresh
     fl = threading.Lock()
     lret, lfr = False, None
+    read_timeout_count = [0]
+    reconnect_attempts = [0]
+    MAX_RECONNECT = 5
 
+    # FIX: bg_reader uses cap_holder[0] so reassignment is visible to pipeline loop
     def bg_reader():
-        nonlocal lret, lfr
         while not stop_event.is_set():
-            r, f = cap.read()
-            with fl:
-                lret, lfr = r, (f.copy() if f is not None else None)
-            if not r:
-                time.sleep(0.05)
+            try:
+                cap = cap_holder[0]
+                if cap is None:
+                    time.sleep(0.05)
+                    continue
+                r, f = cap.read()
+                with fl:
+                    nonlocal lret, lfr
+                    lret = r
+                    lfr  = f.copy() if f is not None else None
+                if not r:
+                    read_timeout_count[0] += 1
+                    if (read_timeout_count[0] > 30 and is_live
+                            and reconnect_attempts[0] < MAX_RECONNECT):
+                        print(f"[WARN] Stream stalled, reconnecting "
+                              f"(attempt {reconnect_attempts[0]+1}/{MAX_RECONNECT})")
+                        try:
+                            cap_holder[0].release()
+                        except Exception:
+                            pass
+                        time.sleep(0.5)
+                        try:
+                            new_cap = cv2.VideoCapture(source)
+                            if is_live:
+                                new_cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                            if new_cap.isOpened():
+                                cap_holder[0] = new_cap   # FIX: rebind via container
+                                read_timeout_count[0] = 0
+                                reconnect_attempts[0] += 1
+                                print("[INFO] Reconnected successfully")
+                            else:
+                                print("[WARN] Reconnect failed — cap not opened")
+                                reconnect_attempts[0] += 1
+                        except Exception as e:
+                            print(f"[ERROR] Reconnect exception: {e}")
+                            reconnect_attempts[0] += 1
+                    time.sleep(0.05)
+                else:
+                    read_timeout_count[0] = 0
+            except Exception as e:
+                print(f"[ERROR] bg_reader exception: {e}")
+                time.sleep(0.1)
 
     if is_live:
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        cap_holder[0].set(cv2.CAP_PROP_BUFFERSIZE, 1)
         threading.Thread(target=bg_reader, daemon=True).start()
-        time.sleep(0.5)  # let buffer fill
+        time.sleep(0.5)
 
     fidx = fps = fps_ctr = 0
     fps_t = time.time()
     last_dets = []
     stop_reason = "Done"
+    frame_timeout_count = 0
 
     while not stop_event.is_set():
         # ── Read frame ──────────────────────────────────────
@@ -320,46 +382,54 @@ def pipeline_thread(source, stop_event, model):
                 ret = lret
                 fr  = lfr.copy() if lfr is not None else None
             if fr is None:
+                frame_timeout_count += 1
+                if frame_timeout_count % 50 == 0:
+                    print(f"[WARN] No frames for {frame_timeout_count * 20}ms "
+                          f"(reconnects: {reconnect_attempts[0]})")
+                if frame_timeout_count > 150:
+                    stop_reason = (f"Stream timeout — no frames for 3s "
+                                   f"(reconnect attempts: {reconnect_attempts[0]})")
+                    break
                 time.sleep(0.02)
                 continue
+            frame_timeout_count = 0
         else:
-            ret, fr = cap.read()
+            ret, fr = cap_holder[0].read()
             if not ret or fr is None:
-                # Uploaded/local video: stop cleanly at end of file.
                 stop_reason = "Video completed"
                 break
 
-        fidx   += 1
+        fidx    += 1
         fps_ctr += 1
-        elapsed = time.time() - fps_t
+        elapsed  = time.time() - fps_t
         if elapsed >= 1.0:
             fps     = fps_ctr / elapsed
             fps_ctr = 0
             fps_t   = time.time()
 
-        # ── Inference (every N frames) ───────────────────────
+        # ── Inference ───────────────────────────────────────
         if FRAME_SKIP == 0 or fidx % (FRAME_SKIP + 1) == 0:
             last_dets = infer(model, fr)
 
         vmap, all_cids = rule_engine(last_dets, fr)
         ventries       = list(vmap.items())
 
-        # ── Trigger alerts for new violations ────────────────
+        # ── Trigger alerts ───────────────────────────────────
         cur_v = {c for c in all_cids if c in VIOLATION_CLASSES}
         new_v = cur_v - pipeline["active_violations"]
         for cid in new_v:
-            now = time.time()
+            now     = time.time()
             last_ts = pipeline["last_alert_time"].get(cid, 0.0)
             if now - last_ts >= ALERT_REPEAT_COOLDOWN_SEC:
                 conf = vmap.get(VIOLATION_CLASSES[cid], 0.5)
                 fire_alert(cid, conf, fr.copy())
         pipeline["active_violations"] = cur_v
 
-        # ── Overlay HUD + banner ─────────────────────────────
+        # ── Overlay ─────────────────────────────────────────
         draw_hud(fr, fps, fidx, len(ventries), pipeline["stats"]["total_alerts"])
         draw_banner(fr, ventries)
 
-        # ── Update stats ─────────────────────────────────────
+        # ── Stats ────────────────────────────────────────────
         pipeline["stats"].update({
             "fps":            round(fps, 1),
             "frame":          fidx,
@@ -367,24 +437,27 @@ def pipeline_thread(source, stop_event, model):
             "violation_list": [[n, round(c*100,1)] for n,c in ventries],
         })
 
-        # ── Encode to JPEG for streaming ─────────────────────
+        # ── JPEG encode ──────────────────────────────────────
         ok, buf = cv2.imencode(".jpg", fr, [cv2.IMWRITE_JPEG_QUALITY, 80])
         if ok:
             with pipeline["jpeg_lock"]:
                 pipeline["jpeg"] = buf.tobytes()
 
-        # ── Emit stats every 10 frames ───────────────────────
+        # ── Emit stats ───────────────────────────────────────
         if fidx % 10 == 0:
             sio.emit("stats", pipeline["stats"])
 
-        # ── Frame rate limiter (max ~30fps) ──────────────────
         time.sleep(0.001)
 
-    cap.release()
+    # ── Cleanup ──────────────────────────────────────────────
+    try:
+        cap_holder[0].release()
+    except Exception:
+        pass
     pipeline["running"] = False
-    # Push final stats so UI keeps latest alert/count values.
     sio.emit("stats", pipeline["stats"])
     sio.emit("pipeline_stopped", {"reason": stop_reason})
+    print(f"[INFO] Pipeline stopped: {stop_reason}")
 
 # ─────────────────────────────────────────────────────────────
 # FLASK ROUTES
@@ -396,7 +469,6 @@ def index():
 
 @app.route("/video_feed")
 def video_feed():
-    """MJPEG stream for uploaded video and CCTV."""
     def gen():
         while True:
             with pipeline["jpeg_lock"]:
@@ -408,17 +480,35 @@ def video_feed():
 
 @app.route("/alerts/<path:filename>")
 def serve_alert(filename):
-    """Serve saved alert frame images from disk."""
     return send_from_directory(ALERT_SAVE_DIR, filename)
+
+@app.route("/test_stream", methods=["POST"])
+def test_stream():
+    url = (request.json or {}).get("url", "").strip()
+    if not url:
+        return jsonify({"ok": False, "error": "No URL provided"})
+    print(f"[TEST] Probing stream: {url}")
+    try:
+        cap = cv2.VideoCapture(url)
+        if not cap.isOpened():
+            return jsonify({"ok": False, "error": f"Cannot open: {url}"})
+        ret, frame = cap.read()
+        cap.release()
+        if not ret:
+            return jsonify({"ok": False, "error": "Stream opened but no frames received"})
+        return jsonify({"ok": True, "message": f"Stream OK — received frame {frame.shape}"})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
 
 @app.route("/start_cctv", methods=["POST"])
 def start_cctv():
     url = (request.json or {}).get("url", "").strip()
     if not url:
         return jsonify({"ok": False, "error": "No URL"})
+    print(f"[CCTV] Starting stream: {url}")
     _stop()
-    _start(url, "cctv")
-    return jsonify({"ok": True})
+    ok, err = _start(url, "cctv")
+    return jsonify({"ok": ok, "error": err})
 
 @app.route("/upload_video", methods=["POST"])
 def upload_video():
@@ -428,33 +518,34 @@ def upload_video():
     path = os.path.join(UPLOAD_DIR, secure_filename(f.filename))
     f.save(path)
     _stop()
-    _start(path, "upload")
-    return jsonify({"ok": True, "filename": f.filename})
+    ok, err = _start(path, "upload")
+    return jsonify({"ok": ok, "filename": f.filename, "error": err})
 
 @app.route("/start_webcam_backend", methods=["POST"])
 def start_webcam_backend():
     _stop()
-    _start(0, "server_webcam")
-    return jsonify({"ok": True})
+    ok, err = _start(0, "server_webcam")
+    return jsonify({"ok": ok, "error": err})
 
 @app.route("/process_frame", methods=["POST"])
 def process_frame():
-    """
-    Browser webcam mode:
-    Browser sends a base64 JPEG frame → server runs inference →
-    returns annotated base64 JPEG back to browser for display.
-    """
+    # FIX: guard against model not loaded
+    if _model is None:
+        return jsonify({"ok": False, "error": "Model not loaded"})
+
     import numpy as np
     b64 = (request.json or {}).get("frame", "")
     if not b64:
         return jsonify({"ok": False})
 
-    # Decode base64 → numpy array → OpenCV image
-    raw  = base64.b64decode(b64.split(",")[-1])
-    arr  = np.frombuffer(raw, np.uint8)
-    fr   = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-    if fr is None:
-        return jsonify({"ok": False})
+    try:
+        raw  = base64.b64decode(b64.split(",")[-1])
+        arr  = np.frombuffer(raw, np.uint8)
+        fr   = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        if fr is None:
+            return jsonify({"ok": False, "error": "Could not decode frame"})
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Decode error: {e}"})
 
     dets              = infer(_model, fr)
     vmap, all_cids    = rule_engine(dets, fr)
@@ -477,10 +568,9 @@ def process_frame():
     })
     sio.emit("stats", pipeline["stats"])
 
-    # Encode annotated frame back to base64
     ok, buf = cv2.imencode(".jpg", fr, [cv2.IMWRITE_JPEG_QUALITY, 80])
     if not ok:
-        return jsonify({"ok": False})
+        return jsonify({"ok": False, "error": "Encode failed"})
 
     return jsonify({
         "ok":             True,
@@ -503,6 +593,8 @@ def get_alert_photos():
 
 # ─────────────────────────────────────────────────────────────
 # PIPELINE CONTROL
+# FIX: _start now loads model with error handling and returns (ok, error)
+# FIX: _stop resets last_alert_time so cooldowns don't carry across sessions
 # ─────────────────────────────────────────────────────────────
 
 def _stop():
@@ -511,21 +603,32 @@ def _stop():
     t = pipeline.get("thread")
     if t and t.is_alive(): t.join(timeout=3)
     pipeline.update({
-        "running": False, "jpeg": None,
-        "active_violations": set(),
+        "running":    False,
+        "jpeg":       None,
+        "active_violations":        set(),
         "webcam_active_violations": set(),
+        # FIX: clear stale cooldown times so a fresh session alerts properly
+        "last_alert_time": {},
     })
 
 def _start(source, stype):
     global _model
     if _model is None:
         print("[INFO] Loading model…")
-        _model = YOLO(MODEL_PATH)
-        print("[INFO] Model ready")
+        try:
+            _model = YOLO(MODEL_PATH)
+            print("[INFO] Model ready")
+        except Exception as e:
+            msg = f"Failed to load model '{MODEL_PATH}': {e}"
+            print(f"[ERROR] {msg}")
+            sio.emit("pipeline_error", {"msg": msg})
+            return False, msg
+
     se = threading.Event()
     t  = threading.Thread(target=pipeline_thread, args=(source, se, _model), daemon=True)
     pipeline.update({"running": True, "stop_event": se, "thread": t})
     t.start()
+    return True, None
 
 # ─────────────────────────────────────────────────────────────
 # SOCKET EVENTS
@@ -534,12 +637,13 @@ def _start(source, stype):
 @sio.on("connect")
 def on_connect():
     sio.emit("stats", pipeline["stats"])
-    # Replay last 50 alerts to newly connected client
     for e in pipeline["alert_log"][-50:]:
         sio.emit("new_alert", e)
 
 # ─────────────────────────────────────────────────────────────
-# DASHBOARD HTML — inline, no external template files needed
+# DASHBOARD HTML
+# FIX: pipeline_stopped now shows reason and re-enables UI controls
+# FIX: error alert includes the reason string from server
 # ─────────────────────────────────────────────────────────────
 
 DASHBOARD_HTML = """<!DOCTYPE html>
@@ -617,15 +721,11 @@ main{padding:14px;display:flex;flex-direction:column;gap:10px;overflow:hidden;}
 .btn-stop:hover{background:var(--danger);}
 .webcam-hint{flex:1;font-size:13px;color:var(--dim);padding:8px 4px;}
 
-/* ── Video display area ── */
 .vid-wrap{flex:1;background:#000;border:1px solid var(--border);border-radius:var(--r);
   overflow:hidden;position:relative;min-height:0;}
-
-/* ✅ FIX: Both stream-img and wc-canvas fill the container correctly */
 #stream-img{width:100%;height:100%;object-fit:contain;display:none;background:#000;}
 #wc-canvas {width:100%;height:100%;object-fit:contain;display:none;background:#000;}
 #wc-video  {display:none;}
-
 .placeholder{position:absolute;inset:0;display:flex;flex-direction:column;
   align-items:center;justify-content:center;gap:12px;color:var(--dimmer);}
 .placeholder .ico{font-size:52px;opacity:.35;}
@@ -634,13 +734,18 @@ main{padding:14px;display:flex;flex-direction:column;gap:10px;overflow:hidden;}
   border:1px solid var(--border2);border-radius:4px;padding:4px 10px;
   font-family:var(--mono);font-size:11px;color:var(--accent);display:none;}
 
+/* FIX: error toast for pipeline_error / pipeline_stopped */
+#err-toast{display:none;position:absolute;bottom:12px;left:50%;transform:translateX(-50%);
+  background:#1a0505;border:1px solid var(--danger2);border-radius:var(--r);
+  padding:8px 18px;color:#ff8080;font-size:12px;font-family:var(--mono);
+  z-index:100;max-width:90%;text-align:center;}
+
 .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;flex-shrink:0;}
 .sc{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);padding:10px 14px;}
 .sc .lbl{font-size:10px;letter-spacing:2px;color:var(--dim);text-transform:uppercase;margin-bottom:2px;}
 .sc .val{font-family:var(--mono);font-size:24px;color:var(--accent);line-height:1;}
 .sc.d .val{color:var(--danger);}
 
-/* ── Sidebar ── */
 aside{background:var(--panel);border-left:1px solid var(--border);
   display:flex;flex-direction:column;overflow:hidden;}
 .aside-hd{padding:12px 16px 10px;border-bottom:1px solid var(--border);
@@ -654,7 +759,6 @@ aside{background:var(--panel);border-left:1px solid var(--border);
 .vtag .vn{font-size:13px;font-weight:700;color:var(--danger);letter-spacing:1px;}
 .vtag .vc{font-family:var(--mono);font-size:12px;color:var(--warn);}
 .no-v{color:var(--safe);font-size:13px;font-weight:700;letter-spacing:1px;text-align:center;padding:14px 0;}
-
 .log-hd{display:flex;align-items:center;justify-content:space-between;
   padding:10px 16px 8px;border-bottom:1px solid var(--border);}
 .log-hd span{font-size:10px;letter-spacing:2px;color:var(--dim);text-transform:uppercase;}
@@ -666,8 +770,6 @@ aside{background:var(--panel);border-left:1px solid var(--border);
 .btn-alerts:hover{color:#fff;background:var(--accent2);}
 #alert-log{flex:1;overflow-y:auto;padding:8px;display:flex;flex-direction:column;
   gap:6px;scrollbar-width:thin;scrollbar-color:var(--border) transparent;}
-
-/* ✅ Alert card with thumbnail image */
 .le{border-radius:6px;border-left:3px solid var(--danger);background:#120205;
   animation:fi .4s ease;overflow:hidden;}
 .le-top{padding:8px 10px;}
@@ -677,8 +779,6 @@ aside{background:var(--panel);border-left:1px solid var(--border);
 .le-img{width:100%;max-height:120px;object-fit:cover;display:block;
   border-top:1px solid rgba(255,31,31,0.2);cursor:pointer;}
 .le-img:hover{opacity:0.85;}
-
-/* Full-screen image viewer */
 #img-viewer{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.92);
   z-index:10010;align-items:center;justify-content:center;cursor:zoom-out;}
 #img-viewer.open{display:flex;}
@@ -697,17 +797,13 @@ aside{background:var(--panel);border-left:1px solid var(--border);
 .ac-ts{font-family:var(--mono);font-size:10px;color:var(--dim);}
 .ac-msg{font-size:12px;color:#ff7070;font-weight:700;margin-top:4px;}
 .ac-conf{font-family:var(--mono);font-size:11px;color:var(--warn);margin-top:3px;}
-
 #afl{position:fixed;inset:0;background:rgba(255,0,0,0);pointer-events:none;z-index:1000;transition:background .1s;}
 #afl.flash{background:rgba(255,0,0,.18);}
-
 @keyframes fi{from{opacity:0;transform:translateY(-4px);}to{opacity:1;transform:translateY(0);}}
 </style>
 </head>
 <body>
 <div id="afl"></div>
-
-<!-- Full-screen image viewer for alert frames -->
 <div id="img-viewer" onclick="closeViewer()">
   <img id="viewer-img" src="" alt="Alert frame">
 </div>
@@ -734,7 +830,6 @@ aside{background:var(--panel);border-left:1px solid var(--border);
     <button class="stab"        onclick="setMode('webcam')">🎥 Webcam</button>
   </div>
 
-  <!-- Upload -->
   <div class="cfg on" id="cfg-upload">
     <label class="upload-lbl" for="vfile">
       <span>📁</span><span id="ufname">Choose a video file…</span>
@@ -744,14 +839,13 @@ aside{background:var(--panel);border-left:1px solid var(--border);
     <button class="btn btn-stop" onclick="stopAll()">Stop</button>
   </div>
 
-  <!-- CCTV -->
   <div class="cfg" id="cfg-cctv">
-    <input type="text" id="cctv-url" placeholder="rtsp://192.168.x.x/stream  or  http://IP:8080/video">
+    <input type="text" id="cctv-url" placeholder="http://10.1.79.16:8080  or  rtsp://192.168.x.x/stream">
+    <button class="btn btn-go" onclick="testCCTV()">Test</button>
     <button class="btn btn-go" onclick="startCCTV()">Connect</button>
     <button class="btn btn-stop" onclick="stopAll()">Stop</button>
   </div>
 
-  <!-- Webcam -->
   <div class="cfg" id="cfg-webcam">
     <div class="webcam-hint">Browser camera → frames processed by server in real time.</div>
     <button class="btn btn-go" onclick="startWebcam()">Start Browser Cam</button>
@@ -759,18 +853,17 @@ aside{background:var(--panel);border-left:1px solid var(--border);
     <button class="btn btn-stop" onclick="stopWebcam()">Stop</button>
   </div>
 
-  <!-- Video area -->
   <div class="vid-wrap">
     <div class="placeholder" id="ph">
       <div class="ico">🛡️</div>
       <p>Select a source to begin monitoring</p>
     </div>
-    <!-- MJPEG stream (upload / CCTV / server webcam) -->
     <img id="stream-img" src="" alt="Live stream">
-    <!-- Browser webcam canvas -->
     <video id="wc-video" autoplay playsinline muted></video>
     <canvas id="wc-canvas"></canvas>
     <div id="live-badge">● LIVE</div>
+    <!-- FIX: error toast inside vid-wrap so it's visible -->
+    <div id="err-toast"></div>
   </div>
 
   <div class="stats">
@@ -784,7 +877,6 @@ aside{background:var(--panel);border-left:1px solid var(--border);
 <aside>
   <div class="aside-hd"><div class="live-dot"></div>Active Violations</div>
   <div id="active-v"><div class="no-v" id="no-v" style="display:none"></div></div>
-
   <div class="log-hd">
     <span>Alert Log</span>
     <div>
@@ -800,41 +892,40 @@ const socket = io();
 let mode='upload', wcStream=null, wcTimer=null, chosenFile=null;
 let audioCtx=null;
 
-// ── Image viewer ─────────────────────────────────────────────
+// ── Image viewer ──────────────────────────────────────────────
 function openViewer(src){
-  const viewer = document.getElementById('img-viewer');
-  document.getElementById('viewer-img').src = src;
-  viewer.style.zIndex = '10010';
-  viewer.classList.add('open');
+  document.getElementById('viewer-img').src=src;
+  document.getElementById('img-viewer').classList.add('open');
 }
-function closeViewer()  { document.getElementById('img-viewer').classList.remove('open'); }
+function closeViewer(){ document.getElementById('img-viewer').classList.remove('open'); }
 function closeAlertsModal(){ document.getElementById('alerts-modal').classList.remove('open'); }
 function openAlertsModal(){
   const grid=document.getElementById('alerts-grid');
   grid.innerHTML='<div class="ac-ts">Loading...</div>';
-  fetch('/alert_photos')
-    .then(r=>r.json())
-    .then(items=>{
-      grid.innerHTML='';
-      if(!items.length){
-        grid.innerHTML='<div class="ac-ts">No alerts captured yet.</div>';
-        return;
-      }
-      items.forEach(e=>{
-        const src=e.img_url || e.img_b64 || '';
-        const card=document.createElement('div');
-        card.className='acard';
-        card.innerHTML=`<img src="${src}" alt="Alert frame" onclick="openViewer('${src}')">
-          <div class="ac-body">
-            <div class="ac-ts">${e.ts || ''}</div>
-            <div class="ac-msg">${e.msg || 'ALERT'}</div>
-            <div class="ac-conf">Confidence: ${e.conf || 0}%</div>
-          </div>`;
-        grid.appendChild(card);
-      });
-    })
-    .catch(()=>{ grid.innerHTML='<div class="ac-ts">Failed to load alerts.</div>'; });
+  fetch('/alert_photos').then(r=>r.json()).then(items=>{
+    grid.innerHTML='';
+    if(!items.length){ grid.innerHTML='<div class="ac-ts">No alerts captured yet.</div>'; return; }
+    items.forEach(e=>{
+      const src=e.img_url||e.img_b64||'';
+      const card=document.createElement('div'); card.className='acard';
+      card.innerHTML=`<img src="${src}" alt="Alert frame" onclick="openViewer('${e.img_url||src}')">
+        <div class="ac-body">
+          <div class="ac-ts">${e.ts||''}</div>
+          <div class="ac-msg">${e.msg||'ALERT'}</div>
+          <div class="ac-conf">Confidence: ${e.conf||0}%</div>
+        </div>`;
+      grid.appendChild(card);
+    });
+  }).catch(()=>{ grid.innerHTML='<div class="ac-ts">Failed to load alerts.</div>'; });
   document.getElementById('alerts-modal').classList.add('open');
+}
+
+// ── Error toast ───────────────────────────────────────────────
+function showError(msg, duration=6000){
+  const t=document.getElementById('err-toast');
+  t.textContent=msg; t.style.display='block';
+  clearTimeout(t._tid);
+  t._tid=setTimeout(()=>t.style.display='none', duration);
 }
 
 // ── Mode switcher ─────────────────────────────────────────────
@@ -859,18 +950,28 @@ function startUpload(){
   showServerStream();
   const fd=new FormData(); fd.append('video',chosenFile);
   fetch('/upload_video',{method:'POST',body:fd})
-    .then(r=>r.json()).then(d=>{if(!d.ok)alert('Upload error: '+d.error);});
+    .then(r=>r.json())
+    .then(d=>{ if(!d.ok) showError('Upload error: '+(d.error||'unknown')); });
 }
 
 // ── CCTV ──────────────────────────────────────────────────────
+function testCCTV(){
+  const url=document.getElementById('cctv-url').value.trim();
+  if(!url){alert('Enter a stream URL');return;}
+  fetch('/test_stream',{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({url})
+  }).then(r=>r.json()).then(d=>{
+    if(d.ok) alert('✓ Stream test OK: '+d.message);
+    else alert('✗ Stream test failed: '+d.error);
+  }).catch(e=>alert('Error: '+e));
+}
 function startCCTV(){
   const url=document.getElementById('cctv-url').value.trim();
   if(!url){alert('Enter a stream URL');return;}
   showServerStream();
   fetch('/start_cctv',{method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({url})
-  }).then(r=>r.json()).then(d=>{if(!d.ok)alert('CCTV error: '+d.error);});
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({url})
+  }).then(r=>r.json()).then(d=>{ if(!d.ok) showError('CCTV error: '+(d.error||'unknown')); });
 }
 
 // ── Browser webcam ────────────────────────────────────────────
@@ -878,93 +979,65 @@ async function startWebcam(){
   try{
     if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia)
       throw new Error('Camera API unavailable');
-
-    wcStream = await navigator.mediaDevices.getUserMedia({
-      video:{width:{ideal:640},height:{ideal:480},facingMode:'environment'}
-    });
-
-    const vid = document.getElementById('wc-video');
-    vid.srcObject = wcStream;
-
-    // ✅ FIX: wait for metadata so we know the actual video dimensions
-    await new Promise(res => {
-      if(vid.readyState >= 1){ res(); return; }
-      vid.addEventListener('loadedmetadata', res, {once:true});
+    wcStream=await navigator.mediaDevices.getUserMedia(
+      {video:{width:{ideal:640},height:{ideal:480},facingMode:'environment'}});
+    const vid=document.getElementById('wc-video');
+    vid.srcObject=wcStream;
+    await new Promise(res=>{
+      if(vid.readyState>=1){res();return;}
+      vid.addEventListener('loadedmetadata',res,{once:true});
     });
     await vid.play();
-
-    // ✅ FIX: set canvas to actual video dimensions
-    const c = document.getElementById('wc-canvas');
-    c.width  = vid.videoWidth  || 640;
-    c.height = vid.videoHeight || 480;
-
+    const c=document.getElementById('wc-canvas');
+    c.width=vid.videoWidth||640; c.height=vid.videoHeight||480;
     showWebcamStream();
-
-    // ✅ FIX: send frames every 200ms and draw annotated result back
-    wcTimer = setInterval(sendFrame, 200);
-
+    wcTimer=setInterval(sendFrame,200);
   }catch(e){
-    console.warn('Browser webcam failed:', e.message);
-    alert('Camera error: '+e.message+'. Trying server webcam instead.');
+    console.warn('Browser webcam failed:',e.message);
+    showError('Camera error: '+e.message+'. Switching to server webcam.');
     startServerWebcam();
   }
 }
-
 function startServerWebcam(){
   showServerStream();
   fetch('/start_webcam_backend',{method:'POST'})
     .then(r=>r.json())
-    .then(d=>{ if(!d.ok) alert('Server webcam failed to open'); })
-    .catch(()=>alert('Server webcam error'));
+    .then(d=>{ if(!d.ok) showError('Server webcam error: '+(d.error||'unknown')); })
+    .catch(()=>showError('Server webcam error'));
 }
-
 function stopWebcam(){
-  if(wcTimer){ clearInterval(wcTimer); wcTimer=null; }
-  if(wcStream){ wcStream.getTracks().forEach(t=>t.stop()); wcStream=null; }
+  if(wcTimer){clearInterval(wcTimer);wcTimer=null;}
+  if(wcStream){wcStream.getTracks().forEach(t=>t.stop());wcStream=null;}
   hideStream();
   fetch('/stop',{method:'POST'});
 }
-
 function sendFrame(){
-  const vid = document.getElementById('wc-video');
-  if(!vid.videoWidth) return; // video not ready yet
-
-  // Draw current video frame to temp canvas
-  const tmp = document.createElement('canvas');
-  tmp.width  = vid.videoWidth;
-  tmp.height = vid.videoHeight;
-  tmp.getContext('2d').drawImage(vid, 0, 0);
-
-  const b64 = tmp.toDataURL('image/jpeg', 0.75);
-
-  fetch('/process_frame',{
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({frame: b64})
-  })
-  .then(r=>r.json())
-  .then(d=>{
-    if(!d.ok || !d.frame) return;
-
-    // ✅ FIX: draw annotated frame onto the visible canvas
-    const c   = document.getElementById('wc-canvas');
-    const ctx = c.getContext('2d');
-    const img = new Image();
-    img.onload = () => {
-      // Resize canvas if needed
-      if(c.width !== img.naturalWidth)  c.width  = img.naturalWidth;
-      if(c.height !== img.naturalHeight) c.height = img.naturalHeight;
-      ctx.drawImage(img, 0, 0);
+  const vid=document.getElementById('wc-video');
+  if(!vid.videoWidth)return;
+  const tmp=document.createElement('canvas');
+  tmp.width=vid.videoWidth; tmp.height=vid.videoHeight;
+  tmp.getContext('2d').drawImage(vid,0,0);
+  const b64=tmp.toDataURL('image/jpeg',0.75);
+  fetch('/process_frame',{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({frame:b64})
+  }).then(r=>r.json()).then(d=>{
+    if(!d.ok||!d.frame)return;
+    const c=document.getElementById('wc-canvas');
+    const ctx=c.getContext('2d');
+    const img=new Image();
+    img.onload=()=>{
+      if(c.width!==img.naturalWidth)  c.width=img.naturalWidth;
+      if(c.height!==img.naturalHeight) c.height=img.naturalHeight;
+      ctx.drawImage(img,0,0);
     };
-    img.src = d.frame;
-  })
-  .catch(()=>{});
+    img.src=d.frame;
+  }).catch(()=>{});
 }
 
 // ── Stop all ──────────────────────────────────────────────────
 function stopAll(){
-  if(wcTimer){ clearInterval(wcTimer); wcTimer=null; }
-  if(wcStream){ wcStream.getTracks().forEach(t=>t.stop()); wcStream=null; }
+  if(wcTimer){clearInterval(wcTimer);wcTimer=null;}
+  if(wcStream){wcStream.getTracks().forEach(t=>t.stop());wcStream=null;}
   hideStream();
   fetch('/stop',{method:'POST'});
 }
@@ -973,8 +1046,7 @@ function stopAll(){
 function showServerStream(){
   document.getElementById('ph').style.display='none';
   document.getElementById('live-badge').style.display='block';
-  // Add cache-busting timestamp to force browser to reload the stream
-  document.getElementById('stream-img').src = '/video_feed?t='+Date.now();
+  document.getElementById('stream-img').src='/video_feed?t='+Date.now();
   document.getElementById('stream-img').style.display='block';
   document.getElementById('wc-canvas').style.display='none';
 }
@@ -986,94 +1058,74 @@ function showWebcamStream(){
 }
 function hideStream(){
   document.getElementById('stream-img').style.display='none';
+  document.getElementById('stream-img').src='';   // FIX: clear src so browser stops the request
   document.getElementById('wc-canvas').style.display='none';
   document.getElementById('live-badge').style.display='none';
   document.getElementById('ph').style.display='flex';
-  document.getElementById('stream-img').src='';
 }
 
 // ── Socket: stats ─────────────────────────────────────────────
-socket.on('stats', d=>{
-  document.getElementById('s-fps').textContent  = (d.fps||0).toFixed(1);
-  document.getElementById('s-fr').textContent   = d.frame || '—';
-  document.getElementById('s-viol').textContent = d.violations || 0;
-  document.getElementById('s-al').textContent   = d.total_alerts || 0;
-
-  const gs=document.getElementById('gstatus'), tx=document.getElementById('stxt');
-  if((d.violations||0)>0){ gs.classList.add('alert');    tx.textContent='VIOLATION DETECTED'; }
-  else                    { gs.classList.remove('alert'); tx.textContent='MONITORING'; }
-
-  const av=document.getElementById('active-v'), nv=document.getElementById('no-v');
+socket.on('stats',d=>{
+  document.getElementById('s-fps').textContent=(d.fps||0).toFixed(1);
+  document.getElementById('s-fr').textContent=d.frame||'—';
+  document.getElementById('s-viol').textContent=d.violations||0;
+  document.getElementById('s-al').textContent=d.total_alerts||0;
+  const gs=document.getElementById('gstatus'),tx=document.getElementById('stxt');
+  if((d.violations||0)>0){gs.classList.add('alert');tx.textContent='VIOLATION DETECTED';}
+  else{gs.classList.remove('alert');tx.textContent='MONITORING';}
+  const av=document.getElementById('active-v');
   av.querySelectorAll('.vtag').forEach(e=>e.remove());
-  if(d.violation_list && d.violation_list.length){
-    nv.style.display='none';
+  if(d.violation_list&&d.violation_list.length){
     d.violation_list.forEach(([n,c])=>{
-      const t=document.createElement('div'); t.className='vtag';
+      const t=document.createElement('div');t.className='vtag';
       t.innerHTML=`<span class="vn">${n}</span><span class="vc">${c}%</span>`;
       av.appendChild(t);
     });
-  } else { nv.style.display='none'; }
+  }
 });
 
-// ── Socket: new alert — shows frame thumbnail ─────────────────
-socket.on('new_alert', entry=>{
+// FIX: pipeline_stopped resets status bar and hides live badge
+socket.on('pipeline_stopped',e=>{
+  const gs=document.getElementById('gstatus'),tx=document.getElementById('stxt');
+  gs.classList.remove('alert');
+  tx.textContent='STOPPED';
+  document.getElementById('live-badge').style.display='none';
+  if(e&&e.reason&&e.reason!=='Video completed'&&e.reason!=='Done'){
+    showError('Stream stopped: '+e.reason);
+  }
+});
+
+// FIX: pipeline_error shows the actual reason in a toast, not just a raw alert()
+socket.on('pipeline_error',e=>{
+  const gs=document.getElementById('gstatus'),tx=document.getElementById('stxt');
+  gs.classList.add('alert');
+  tx.textContent='ERROR';
+  hideStream();
+  showError('Pipeline error: '+(e&&e.msg?e.msg:'Unknown error'), 10000);
+});
+
+socket.on('new_alert',entry=>{
   prependLog(entry);
-  // Keep alerts in log only; avoid intrusive per-frame feedback.
 });
 
-socket.on('pipeline_stopped', ()=>{
-  document.getElementById('stxt').textContent='STOPPED';
-  document.getElementById('gstatus').classList.remove('alert');
-});
-socket.on('pipeline_error', e=>{
-  document.getElementById('stxt').textContent='ERROR';
-  document.getElementById('gstatus').classList.add('alert');
-  alert('Pipeline error: '+(e&&e.msg?e.msg:'Unknown'));
-});
-
-// ✅ Alert card with thumbnail image
 function prependLog(e){
-  const log = document.getElementById('alert-log');
-  const el  = document.createElement('div');
-  el.className='le';
-
-  // Use base64 for instant display, fallback to URL
-  const imgSrc = e.img_b64 || e.img_url || '';
-  const imgHtml = imgSrc
-    ? `<img class="le-img" src="${imgSrc}" alt="Alert frame"
-         onclick="openViewer('${e.img_url || imgSrc}')"
-         title="Click to view full size">`
-    : '';
-
+  const log=document.getElementById('alert-log');
+  const el=document.createElement('div'); el.className='le';
+  const imgSrc=e.img_b64||e.img_url||'';
+  const imgHtml=imgSrc
+    ?`<img class="le-img" src="${imgSrc}" alt="Alert frame"
+        onclick="openViewer('${e.img_url||imgSrc}')"
+        title="Click to view full size">`:'';
   el.innerHTML=`
     <div class="le-top">
       <div class="lt">${e.ts}</div>
       <div class="lm">⚠ ${e.msg}</div>
       <div class="lc">Confidence: ${e.conf}%</div>
-    </div>
-    ${imgHtml}`;
+    </div>${imgHtml}`;
   log.prepend(el);
-  // Keep max 200 alert cards in DOM
-  while(log.children.length > 200) log.removeChild(log.lastChild);
+  while(log.children.length>200) log.removeChild(log.lastChild);
 }
 
-function flashScreen(){
-  const f=document.getElementById('afl');
-  f.classList.add('flash');
-  setTimeout(()=>f.classList.remove('flash'),400);
-}
-function beep(){
-  try{
-    if(!audioCtx) audioCtx=new(window.AudioContext||window.webkitAudioContext)();
-    const o=audioCtx.createOscillator(), g=audioCtx.createGain();
-    o.connect(g); g.connect(audioCtx.destination);
-    o.frequency.setValueAtTime(900, audioCtx.currentTime);
-    o.frequency.exponentialRampToValueAtTime(400, audioCtx.currentTime+0.18);
-    g.gain.setValueAtTime(0.3, audioCtx.currentTime);
-    g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime+0.35);
-    o.start(); o.stop(audioCtx.currentTime+0.35);
-  }catch(e){}
-}
 function clearLog(){ document.getElementById('alert-log').innerHTML=''; }
 </script>
 </body>
@@ -1089,7 +1141,13 @@ if __name__ == "__main__":
     args = p.parse_args()
 
     print("[INFO] Loading YOLOv8 model…")
-    _model = YOLO(MODEL_PATH)
-    print(f"[INFO] Model ready")
+    try:
+        _model = YOLO(MODEL_PATH)
+        print("[INFO] Model ready")
+    except Exception as e:
+        print(f"[ERROR] Could not load model: {e}")
+        print("[WARN]  Starting server anyway — model will be loaded on first pipeline start")
+        _model = None
+
     print(f"[INFO] Dashboard → http://localhost:{args.port}")
     sio.run(app, host="0.0.0.0", port=args.port, allow_unsafe_werkzeug=True)
