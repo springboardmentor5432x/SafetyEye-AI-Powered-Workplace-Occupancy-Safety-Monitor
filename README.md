@@ -1,194 +1,95 @@
-🚀 SafetyEye – AI Powered Workplace Occupancy & Safety Monitor
-📌 Milestone 1 (Week 1–2): Data Preparation & Environment Setup
+# 🛡️ SafetyEye – AI Powered Workplace Occupancy & Safety Monitor
 
-This milestone focuses on setting up the development environment, preparing and validating the dataset, configuring YOLOv8, and verifying the end-to-end training pipeline.
+SafetyEye is a cutting-edge, AI-driven workplace monitoring system designed to enhance safety compliance in construction sites and industrial environments. Utilizing **YOLOv8** and **OpenCV**, this real-time solution detects personnel and verifies the usage of Personal Protective Equipment (PPE) like hardhats, masks, and safety vests.
 
-✅ Week 1 – Environment Setup & Dataset Verification
+---
 
-🔹 1. Environment Configuration
+## 🌟 Key Features
 
-Installed Python and VS Code
+### 🖥️ Interactive Dashboard
+A premium, dark-themed **Streamlit** dashboard featuring a futuristic UI with neon-glow aesthetics. The dashboard provides a high-level overview of system status, active alerts, and real-time metrics.
 
-Created virtual environment:
+### 🎥 Real-Time Monitoring
+- **Webcam Integration**: Live feed processing for immediate safety verification.
+- **Video Testing**: Support for pre-recorded video analysis to evaluate workplace behavior.
+- **PPE Detection**: Specialized detection for Hardhats, Safety Vests, and Masks.
 
-python -m venv venv
+### 📊 Advanced Analytics
+- **Violations Over Time**: Track safety trends using interactive line charts.
+- **Violation Distribution**: Visualize the prevalence of different safety breaches via pie charts.
+- **Compliance Tracking**: Monitor overall safety percentages with doughnut charts and AI-driven insights.
 
-Installed required dependencies:
+### 📋 Comprehensive Logging
+- **Detailed History**: Every violation is logged with a timestamp, source, and confidence score.
+- **Smart Filtering**: Filter logs by date, violation type, or system source.
+- **Export Ready**: Download logs as **CSV** files for external reporting and audits.
 
-pip install ultralytics torch opencv-python numpy matplotlib
+---
 
-Generated requirements file:
+## 🛠️ Technology Stack
 
-pip freeze > requirements.txt
+- **Core Engine**: Python 3.x
+- **Deep Learning**: YOLOv8 (Ultralytics)
+- **Computer Vision**: OpenCV
+- **Interface**: Streamlit
+- **Data Visualization**: Plotly, Pandas
+- **Machine Learning**: PyTorch
 
-🔹 2. Git Workflow
+---
 
-Cloned project repository
+## 📂 Project Structure
 
-Created feature branch:
+```text
+SafetyEye/
+├── dataset/             # Images, labels, and test videos
+├── docs/                # Milestone reports and documentation (PDFs)
+├── models/              # Pre-trained YOLOv8 weights (.pt files)
+├── notebooks/           # Experimental and training notebooks
+├── scripts/
+│   ├── app.py           # Main entry point (Streamlit Dashboard)
+│   └── pages/           # Modular page logic
+│       ├── analytics.py # Analytics visualizations
+│       └── logs.py      # Incident logging system
+└── requirements.txt     # Project dependencies
+```
 
-git checkout -b yourname-projectname
+---
 
-Configured .gitignore:
+## 🚀 Getting Started
 
-venv/
-runs/
-__pycache__/
-*.pt
-*.log
+### 1. Prerequisites
+Ensure you have Python 3.8+ installed. It is recommended to use a virtual environment.
 
-🔹 3. Dataset Verification
+### 2. Installation
+Clone the repository and install the dependencies:
+```bash
+git clone https://github.com/springboardmentor5432x/SafetyEye-AI-Powered-Workplace-Occupancy-Safety-Monitor.git
+cd SafetyEye-AI-Powered-Workplace-Occupancy-Safety-Monitor
+pip install -r requirements.txt
+```
 
-Downloaded dataset (Construction Site Safety – YOLO format)
+### 3. Run the Application
+Start the Streamlit dashboard:
+```bash
+streamlit run scripts/app.py
+```
 
-Verified:
+---
 
-Image–label one-to-one mapping
+## 📈 Milestone Progress
 
-No missing labels
+- **Milestone 1**: Data Preparation & Environment Setup.
+- **Milestone 2**: Model Training & Initial Evaluation.
+- **Milestone 3**: Core Logic Development & Alert System.
+- **Milestone 4**: Dashboard UI, Analytics, and System Integration.
 
-No incorrect annotation format
+---
 
-Empty labels identified (valid negative samples)
+## 👤 Author
+**Mohammed Ateeq Ur Rahman**  
+*Intern, Infosys Virtual Internship*  
 
-Dataset integrity confirmed.
+---
 
-🔹 4. OpenCV Visualization
-
-Displayed sample images using OpenCV
-
-Drew bounding boxes from YOLO label files
-
-Visually verified annotation correctness
-
-Result: Dataset ready for structured training.
-
-✅ Week 2 – Dataset Organization & Pipeline Validation
-
-🔹 1. YOLOv8 Folder Structure
-
-Converted dataset into YOLOv8 compatible format:
-
-dataset/
-│
-├── images/
-│   ├── train/
-│   ├── val/
-│   └── test/
-│
-└── labels/
-    ├── train/
-    ├── val/
-    └── test/
-
-🔹 2. Dataset Split (70/20/10)
-
-Implemented automated Python script to:
-
-Randomly shuffle dataset
-
-Split into:
-
-70% Training
-
-20% Validation
-
-10% Testing
-
-Preserve image–label pairing
-
-Final Distribution:
-
-Train: 1960 images
-
-Validation: 560 images
-
-Test: 281 images
-
-🔹 3. Class Verification
-
-Programmatically scanned label files.
-
-Unique class IDs found: 0–9
-
-Total classes: 10
-
-🔹 4. data.yaml Configuration
-path: dataset
-
-train: images/train
-val: images/val
-test: images/test
-
-names:
-  0: class_0
-  1: class_1
-  2: class_2
-  3: class_3
-  4: class_4
-  5: class_5
-  6: class_6
-  7: class_7
-  8: class_8
-  9: class_9
-
-
-🔥 5. YOLOv8 Training Validation (1 Epoch Test)
-
-Command executed:
-
-yolo detect train data=dataset/data.yaml model=yolov8n.pt epochs=1 imgsz=640
-📊 Training Output Summary
-Epoch Details
-
-Epoch: 1/1
-
-box_loss: 1.413
-
-cls_loss: 2.94
-
-dfl_loss: 1.502
-
-Training Time: ~0.209 hours
-
-Device: CPU
-
-📈 Validation Metrics (Overall)
-
-Images: 560
-
-Instances: 7944
-
-Precision (P): 0.466
-
-Recall (R): 0.329
-
-mAP50: 0.314
-
-mAP50-95: 0.17
-
-📌 Per-Class mAP50
-Class	mAP50
-class_0	0.484
-class_1	0.291
-class_2	0.166
-class_3	0.089
-class_4	0.237
-class_5	0.607
-class_6	0.223
-class_7	0.338
-class_8	0.601
-class_9	0.106
-
-Note: Performance is expected to be low since training was conducted for only 1 epoch. This run was performed strictly to validate the training pipeline.
-
-🎯 Milestone 1 Status
-
-✔ Environment configured
-✔ Dataset validated
-✔ Dataset split reproducibly
-✔ Class count verified
-✔ YOLOv8 configured
-✔ Training pipeline successfully executed
-
-Milestone 1 completed successfully.
+## 📜 License
+This project is for educational purposes as part of the Infosys Virtual Internship program.
