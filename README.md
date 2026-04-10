@@ -145,3 +145,15 @@ This confirmed the dataset is properly configured and ready for full training.
 ✔ Dataset prepared in YOLO format
 ✔ Training pipeline verified
 ✔ Ready for full model training and evaluation
+
+Completed Milestone 2 of the SafetyEye project.
+
+Week 3:
+- Trained YOLOv8 model for PPE detection.
+- Generated model weights and training metrics.
+
+Week 4:
+- Tested trained model using prediction mode.
+- Verified PPE detection results.
+
+The trained model demonstrates PPE compliance detection for workplace safety monitoring.
